@@ -184,6 +184,8 @@ namespace VisualNovel
                         else if (tok == "초상화" || tok.Equals("portrait", StringComparison.OrdinalIgnoreCase)) def.portrait = true;
                         else if (tok == "전신" || tok.Equals("full", StringComparison.OrdinalIgnoreCase)) def.portrait = false;
                         else if (TryParseRatio(tok, out var aspect)) { def.portrait = true; def.portraitAspect = aspect; }
+                        else if (TryParsePercent(tok, "크기=", "size=", out var sc)) def.scale = sc;
+                        else if (TryParsePercent(tok, "높이=", "y=", out var oy)) def.offsetY = oy;
                         else if (np != null) defaultPos[key] = np;
                         else if (tok.StartsWith("이름=") || tok.StartsWith("name=")) def.nickname = tok.Substring(tok.IndexOf('=') + 1).Trim();
                         else def.image = tok;
@@ -252,6 +254,22 @@ namespace VisualNovel
                 case "center": case "c": case "가운데": case "중앙": return "center";
                 default: return null;
             }
+        }
+
+        /// <summary>"크기=120%" → 1.2, "높이=-10%" → -0.1 (% 없이 쓰면 그대로 비율)</summary>
+        static bool TryParsePercent(string tok, string key1, string key2, out float value)
+        {
+            value = 0f;
+            string v;
+            if (tok.StartsWith(key1, StringComparison.OrdinalIgnoreCase)) v = tok.Substring(key1.Length);
+            else if (tok.StartsWith(key2, StringComparison.OrdinalIgnoreCase)) v = tok.Substring(key2.Length);
+            else return false;
+            v = v.Trim();
+            bool percent = v.EndsWith("%");
+            if (percent) v = v.TrimEnd('%').Trim();
+            if (!float.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value)) return false;
+            if (percent) value /= 100f;
+            return true;
         }
 
         /// <summary>"4:3" 같은 가로:세로 비율</summary>

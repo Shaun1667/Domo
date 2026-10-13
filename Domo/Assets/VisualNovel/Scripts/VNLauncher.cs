@@ -50,6 +50,26 @@ namespace VisualNovel
         readonly GameObject[] portraitOpts = new GameObject[2];
         readonly Sprite[] cropSources = new Sprite[2];
 
+        // 미리보기 (화면 탭 · UI 탭)
+        const float PreviewWidth = 768f;
+        string previewBgPath;
+        string scriptFirstBg; // 대사 파일의 첫 [배경]
+
+        // 배경 이미지 (대사 · 배경음 탭)
+        InputField bgField;
+        Image bgThumb;
+        Text bgThumbEmpty, bgStatus;
+
+        // UI 탭
+        VNSkin currentSkin;
+        Selector boxSel, plateSel, fontSel;
+        InputField fontSearch, textColorField;
+        Text uiStatus;
+        string[] allFonts;
+        int skinLoadToken;
+        const string FrameDefault = "기본";
+        const string FontDefault = "기본 (맑은 고딕)";
+
         AudioSource bgm;
         string bgmLoadedPath;
         System.DateTime bgmLoadedTime;
@@ -131,6 +151,7 @@ namespace VisualNovel
             player.gameObject.SetActive(true);
             player.inputEnabled = true;
             player.ApplySettings(st);
+            player.ApplySkin(currentSkin);
             player.StartCoroutine(player.Begin());
             var bgmPath = st.ResolveBgmPath();
             if (bgmPath != null) StartCoroutine(PlayBgm(bgmPath, true));
@@ -200,7 +221,7 @@ namespace VisualNovel
 
             // 탭
             var tabRow = Row(panel, 16, 66);
-            string[] tabNames = { "캐릭터 설정", "대사 · 배경음", "화면 설정" };
+            string[] tabNames = { "캐릭터 설정", "대사 · 배경음", "화면 설정", "UI 설정" };
             tabs = new Pill[tabNames.Length];
             for (int i = 0; i < tabNames.Length; i++)
             {
@@ -212,10 +233,11 @@ namespace VisualNovel
             var scroll = NewRect("Scroll", panel);
             Size(scroll, flexH: 1);
             var content = ScrollArea(scroll);
-            pages = new GameObject[3];
+            pages = new GameObject[4];
             pages[0] = BuildCharacterPage(content).gameObject;
             pages[1] = BuildScriptPage(content).gameObject;
             pages[2] = BuildScreenPage(content).gameObject;
+            pages[3] = BuildUIPage(content).gameObject;
 
             // 꼬리말
             var footer = Row(panel, 16, 70);
@@ -392,6 +414,42 @@ namespace VisualNovel
             }, 100, 58, 24);
             scriptStatus = Label(card, "", 23, Sub);
 
+            // 배경 이미지 (캐릭터 이미지와 같은 방식)
+            var gcard = CardBox(page, "배경 이미지", "게임을 시작하면 처음부터 표시되는 배경입니다. 대사 파일에 [배경 …] 명령이 나오면 그 이미지로 바뀝니다.");
+            var grow = Row(gcard, 30);
+            grow.GetComponent<HorizontalLayoutGroup>().childAlignment = TextAnchor.UpperLeft;
+            var gthumb = NewRect("Thumb", grow);
+            Box(gthumb, Field, 16, Line);
+            Size(gthumb, 240, 135);
+            bgThumbEmpty = Label(gthumb, "미리보기\n없음", 22, Sub, false, TextAnchor.MiddleCenter);
+            Stretch(bgThumbEmpty.rectTransform);
+            var gimgRt = NewRect("Image", gthumb);
+            Stretch(gimgRt, 8);
+            bgThumb = gimgRt.gameObject.AddComponent<Image>();
+            bgThumb.preserveAspect = true;
+            bgThumb.raycastTarget = false;
+            bgThumb.enabled = false;
+
+            var gcol = Column(grow, 10);
+            Size(gcol, flexW: 1);
+            Label(gcol, "배경 이미지 경로", 23, Sub, true);
+            var gpath = Row(gcol, 12);
+            bgField = InputBox(gpath, st.backgroundImage, "비우면 대사 파일의 [배경] 만 사용  ·  예) bg_classroom.png", v =>
+            {
+                st.backgroundImage = v.Trim();
+                st.Save();
+                RefreshBackground();
+            });
+            PillButton(gpath, "찾아보기", PillStyle.Outline, BrowseBackground, 150, 58, 24);
+            PillButton(gpath, "해제", PillStyle.Outline, () =>
+            {
+                bgField.text = "";
+                st.backgroundImage = "";
+                st.Save();
+                RefreshBackground();
+            }, 100, 58, 24);
+            bgStatus = Label(gcol, "", 21, Sub);
+
             var bcard = CardBox(page, "배경음", "VN/배경음 폴더에 mp3 / ogg / wav 파일이 있으면 게임 중에 반복 재생됩니다.  \"없음\" 을 고르면 재생하지 않습니다.");
             var r3 = Row(bcard, 12);
             bgmSel = SelectorBox(r3, BgmNone, i =>
@@ -417,6 +475,47 @@ namespace VisualNovel
             });
             bgmStatus = Label(bcard, "", 23, Sub);
             return page;
+        }
+
+        void BrowseBackground()
+        {
+            var path = VNFileDialog.OpenFile("배경 이미지 선택", "이미지", new[] { "png", "jpg", "jpeg" }, VNContent.Folder(VNContent.ImageFolder));
+            if (path == null) return;
+            path = MakeRelative(path, VNContent.ImageFolder);
+            bgField.text = path;
+            st.backgroundImage = path;
+            st.Save();
+            RefreshBackground();
+        }
+
+        /// <summary>배경 이미지 경로 확인 + 썸네일 + 미리보기 반영 (캐릭터 이미지와 같은 방식)</summary>
+        void RefreshBackground()
+        {
+            if (bgStatus == null) return;
+            var path = st.backgroundImage?.Trim();
+            var resolved = VNContent.ResolveFile(path, VNContent.ImageFolder);
+            if (string.IsNullOrEmpty(path)) { bgStatus.text = "대사 파일의 [배경] 명령만 사용합니다."; bgStatus.color = Sub; }
+            else if (resolved == null && !path.Contains("://")) { bgStatus.text = "✕ 파일을 찾을 수 없습니다: " + path; bgStatus.color = Danger; }
+            else { bgStatus.text = "✓ " + ShortPath(resolved ?? path); bgStatus.color = Teal; }
+
+            bgThumb.enabled = false;
+            bgThumbEmpty.enabled = true;
+            UpdatePreviewBackground();
+            if (string.IsNullOrEmpty(path)) return;
+            StartCoroutine(VNImageLoader.Load(path, s =>
+            {
+                if (path != st.backgroundImage?.Trim()) return;
+                bgThumb.sprite = s;
+                bgThumb.enabled = s != null;
+                bgThumbEmpty.enabled = s == null;
+            }));
+        }
+
+        /// <summary>미리보기 배경: 기본 배경이 있으면 그것, 없으면 대사 파일의 첫 [배경]</summary>
+        void UpdatePreviewBackground()
+        {
+            var bg = st.backgroundImage?.Trim();
+            SetPreviewBackground(string.IsNullOrEmpty(bg) ? scriptFirstBg : bg);
         }
 
         void BrowseScript()
@@ -454,10 +553,10 @@ namespace VisualNovel
             try
             {
                 var text = VNTextParser.DecodeText(File.ReadAllBytes(path));
-                if (text.TrimStart().StartsWith("{"))
-                    count = JsonUtility.FromJson<VNScript>(text)?.lines?.Count ?? 0;
-                else
-                    count = VNTextParser.Parse(text).lines.Count;
+                var parsed = text.TrimStart().StartsWith("{") ? JsonUtility.FromJson<VNScript>(text) : VNTextParser.Parse(text);
+                count = parsed?.lines?.Count ?? 0;
+                scriptFirstBg = FirstBackground(parsed);
+                UpdatePreviewBackground();
             }
             catch { count = -1; }
 
@@ -521,12 +620,28 @@ namespace VisualNovel
         {
             var page = Column(content, 22);
 
-            var scard = CardBox(page, "인물 크기", "화면에 출력되는 인물 이미지의 크기입니다.");
-            SliderRow(scard, "크기", 50f, 150f, st.characterScale * 100f, v => $"{v:0}%", v =>
+            var lcard = CardBox(page, "인물 배치", "크기와 높이를 바꾸면 아래 미리보기에 바로 반영됩니다. 미리보기 밖으로 나간 부분은 게임에서도 잘려 보입니다.");
+            BuildStagePreview(lcard);
+            string[] names = { "A", "B" };
+            for (int i = 0; i < 2; i++)
             {
-                st.characterScale = v / 100f;
-                st.Save();
-            });
+                int idx = i;
+                SliderRow(lcard, $"{names[i]} 크기", 30f, 200f, st.GetScale(i) * 100f, v => $"{v:0}%", v =>
+                {
+                    st.SetScale(idx, v / 100f);
+                    st.Save();
+                    RefreshPreview();
+                });
+                SliderRow(lcard, $"{names[i]} 높이", -50f, 50f, st.GetOffset(i) * 100f,
+                    v => Mathf.Abs(v) < 0.5f ? "바닥" : (v > 0 ? $"+{v:0}%" : $"{v:0}%"), v =>
+                    {
+                        st.SetOffset(idx, Mathf.Abs(v) < 0.5f ? 0f : v / 100f);
+                        st.Save();
+                        RefreshPreview();
+                    });
+            }
+            Label(lcard, "· 높이 0(바닥) = 이미지 아래 끝이 화면 바닥에 붙습니다.  + 는 위로, - 는 아래로 이동합니다.\n" +
+                         "· 전신 / 초상화는 캐릭터 설정 탭에서 캐릭터마다 지정합니다.", 21, Sub);
 
             var tcard = CardBox(page, "대사 속도", "글자가 한 글자씩 출력되는 속도입니다.");
             Segmented(tcard, new[] { "느리게", "보통", "빠르게", "즉시" }, st.textSpeed, i =>
@@ -548,6 +663,147 @@ namespace VisualNovel
             return page;
         }
 
+        // ── UI 탭 ──
+
+        RectTransform BuildUIPage(RectTransform content)
+        {
+            var page = Column(content, 22);
+
+            var pcard = CardBox(page, "미리보기", "아래 설정을 바꾸면 바로 반영됩니다.");
+            BuildStagePreview(pcard);
+
+            // 대사 박스 / 네임 박스 테두리
+            boxSel = BuildFrameCard(page, "대사 박스 테두리", "대사가 나오는 상자의 이미지입니다.",
+                () => st.uiBoxBorder, v => st.uiBoxBorder = v, v => st.uiBoxImage = v);
+            plateSel = BuildFrameCard(page, "네임 박스 테두리", "캐릭터 이름이 나오는 작은 상자의 이미지입니다.",
+                () => st.uiPlateBorder, v => st.uiPlateBorder = v, v => st.uiPlateImage = v);
+
+            // 대사 폰트
+            var fcard = CardBox(page, "대사 폰트", "Windows 에 설치된 글꼴 중에서 고릅니다. 새 글꼴은 글꼴 파일을 더블클릭 → [설치] 한 뒤 이 창으로 돌아오면 목록에 나타납니다.");
+            var searchRow = Row(fcard, 12);
+            var searchLabel = Label(searchRow, "검색", 23, Ink, true);
+            Size(searchLabel, w: 90);
+            fontSearch = InputBox(searchRow, "", "글꼴 이름 일부 입력 (예: 나눔, 고딕, 명조)", null);
+            fontSearch.onValueChanged.AddListener(_ => RefreshFontList());
+            var fontRow = Row(fcard, 12);
+            var fontLabel = Label(fontRow, "글꼴", 23, Ink, true);
+            Size(fontLabel, w: 90);
+            fontSel = SelectorBox(fontRow, FontDefault, i =>
+            {
+                st.uiFont = i <= 0 ? "" : fontSel.options[i];
+                st.Save();
+                LoadSkin();
+            });
+
+            var colorRow = Row(fcard, 12);
+            var colorLabel = Label(colorRow, "글자색", 23, Ink, true);
+            Size(colorLabel, w: 90);
+            textColorField = InputBox(colorRow, st.uiTextColor, "#FFFFFF  (비우면 흰색)", v =>
+            {
+                st.uiTextColor = v.Trim();
+                st.Save();
+                LoadSkin();
+            });
+            string[] swatches = { "#FFFFFF", "#111111", "#3A2A1A", "#FFE08A" };
+            foreach (var hex in swatches)
+            {
+                var h = hex;
+                var sw = NewRect("Swatch", colorRow);
+                Size(sw, 46, 46);
+                var outer = RoundImage(sw, Line, 23);
+                var inner = NewRect("Fill", sw);
+                Stretch(inner, 3);
+                RoundImage(inner, Hex(h), 20).raycastTarget = false;
+                var b = sw.gameObject.AddComponent<Button>();
+                b.targetGraphic = outer;
+                b.onClick.AddListener(() =>
+                {
+                    textColorField.text = h;
+                    st.uiTextColor = h;
+                    st.Save();
+                    LoadSkin();
+                });
+            }
+            uiStatus = Label(page, "", 22, Sub);
+            return page;
+        }
+
+        /// <summary>대사 박스 / 네임 박스 테두리 카드: VN/UI 이미지 선택 + 모서리 유지(9-slice) 크기</summary>
+        Selector BuildFrameCard(RectTransform page, string title, string desc,
+            System.Func<int> getBorder, System.Action<int> setBorder, System.Action<string> setImage)
+        {
+            var card = CardBox(page, title, desc + "  VN/UI 폴더의 이미지(png, jpg)를 고르세요. \"기본\" 은 반투명 상자입니다.");
+            var row = Row(card, 12);
+            Selector sel = null;
+            sel = SelectorBox(row, FrameDefault, i =>
+            {
+                setImage(i <= 0 ? "" : sel.options[i]);
+                st.Save();
+                LoadSkin();
+            });
+            PillButton(row, "폴더 열기", PillStyle.Outline, () => VNContent.OpenFolder(VNContent.UIFolder), 150, 58, 24);
+            SliderRow(card, "모서리 유지", 0f, 200f, getBorder(), v => v < 1f ? "끔" : $"{v:0}px", v =>
+            {
+                setBorder(Mathf.RoundToInt(v));
+                st.Save();
+                LoadSkin();
+            });
+            Label(card, "· 모서리 유지: 테두리 그림의 가장자리(px)를 늘리지 않고 그대로 둡니다. 테두리 두께보다 조금 크게 맞추면 깔끔합니다. \"끔\" 이면 그림 전체를 상자 크기에 맞게 늘립니다.", 20, Sub);
+            return sel;
+        }
+
+        void RefreshUILists()
+        {
+            if (boxSel == null) return;
+            var images = VNSkin.ListImages();
+            var names = new string[images.Length + 1];
+            names[0] = FrameDefault;
+            images.CopyTo(names, 1);
+            SetSelection(boxSel, names, st.uiBoxImage, v => st.uiBoxImage = v);
+            SetSelection(plateSel, names, st.uiPlateImage, v => st.uiPlateImage = v);
+            allFonts = VNSkin.ListFonts();
+            RefreshFontList();
+        }
+
+        /// <summary>목록에서 현재 값을 선택. 파일이 없어졌으면 "기본" 으로 되돌림</summary>
+        static void SetSelection(Selector sel, string[] names, string current, System.Action<string> reset)
+        {
+            int idx = string.IsNullOrEmpty(current) ? 0 : System.Array.IndexOf(names, current, 1);
+            if (idx < 0) { idx = 0; reset(""); }
+            sel.SetOptions(names, idx);
+        }
+
+        void RefreshFontList()
+        {
+            if (fontSel == null || allFonts == null) return;
+            var q = fontSearch != null ? fontSearch.text.Trim() : "";
+            var list = new System.Collections.Generic.List<string> { FontDefault };
+            foreach (var f in allFonts)
+                if (q.Length == 0 || f.IndexOf(q, System.StringComparison.OrdinalIgnoreCase) >= 0) list.Add(f);
+            // 검색 결과에 없더라도 지금 쓰는 글꼴은 남겨 둠
+            if (!string.IsNullOrEmpty(st.uiFont) && !list.Contains(st.uiFont)) list.Insert(1, st.uiFont);
+            var arr = list.ToArray();
+            int idx = string.IsNullOrEmpty(st.uiFont) ? 0 : System.Array.IndexOf(arr, st.uiFont);
+            fontSel.SetOptions(arr, idx < 0 ? 0 : idx);
+        }
+
+        void LoadSkin()
+        {
+            int token = ++skinLoadToken;
+            StartCoroutine(VNSkin.Build(st, skin =>
+            {
+                if (token != skinLoadToken) return; // 그 사이 다른 값을 고름
+                currentSkin = skin;
+                foreach (var p in previews) ApplyPreviewSkin(p, skin);
+                if (uiStatus == null) return;
+                var missing = new System.Collections.Generic.List<string>();
+                if (!string.IsNullOrEmpty(st.uiBoxImage) && skin?.dialogueBox == null) missing.Add(st.uiBoxImage);
+                if (!string.IsNullOrEmpty(st.uiPlateImage) && skin?.namePlate == null) missing.Add(st.uiPlateImage);
+                uiStatus.text = missing.Count > 0 ? "✕ 이미지를 불러오지 못했습니다: " + string.Join(", ", missing) : "";
+                uiStatus.color = Danger;
+            }));
+        }
+
         /// <summary>캐릭터 미리보기: 초상화면 자른 결과, 전신이면 원본</summary>
         void RefreshCrop(int idx)
         {
@@ -561,6 +817,151 @@ namespace VisualNovel
             img.sprite = s;
             img.enabled = s != null;
             thumbEmpty[idx].enabled = s == null;
+            RefreshPreview();
+        }
+
+        // ── 게임 화면 미리보기 (화면 탭 · UI 탭 공용) ──
+
+        class StagePreview
+        {
+            public Image bg;
+            public AspectRatioFitter bgFit;
+            public readonly Image[] chars = new Image[2];
+            public Image box, plate;
+            public Text text;
+        }
+
+        readonly System.Collections.Generic.List<StagePreview> previews = new System.Collections.Generic.List<StagePreview>();
+
+        /// <summary>게임 화면과 같은 16:9 비율의 작은 화면. 배경 / A / B / 대화창을 실제 위치대로 보여줌</summary>
+        void BuildStagePreview(RectTransform card)
+        {
+            var p = new StagePreview();
+            var row = Row(card, 0);
+            row.GetComponent<HorizontalLayoutGroup>().childAlignment = TextAnchor.MiddleCenter;
+            var frame = NewRect("StagePreview", row);
+            Size(frame, PreviewWidth, PreviewWidth * 9f / 16f);
+            frame.gameObject.AddComponent<Image>().color = Hex("#1F2329");
+            frame.gameObject.AddComponent<RectMask2D>(); // 화면 밖으로 나간 부분은 잘라서 표시
+
+            var bgRt = NewRect("Background", frame);
+            Stretch(bgRt);
+            p.bg = bgRt.gameObject.AddComponent<Image>();
+            p.bg.raycastTarget = false;
+            p.bg.enabled = false;
+            p.bgFit = bgRt.gameObject.AddComponent<AspectRatioFitter>();
+            p.bgFit.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent;
+            p.bgFit.aspectRatio = 16f / 9f;
+
+            for (int i = 0; i < 2; i++)
+            {
+                var slot = NewRect(i == 0 ? "A" : "B", frame);
+                var img = slot.gameObject.AddComponent<Image>();
+                img.raycastTarget = false;
+                img.enabled = false;
+                slot.gameObject.AddComponent<AspectRatioFitter>().aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth;
+                p.chars[i] = img;
+            }
+
+            // 게임 화면(1920 기준)의 대화창·이름표·글자를 미리보기 크기로 줄여서 배치
+            const float k = PreviewWidth / 1920f;
+            var box = NewRect("DialogueBox", frame);
+            box.anchorMin = VNLayout.DialogueBoxMin;
+            box.anchorMax = VNLayout.DialogueBoxMax;
+            box.offsetMin = box.offsetMax = Vector2.zero;
+            p.box = box.gameObject.AddComponent<Image>();
+            p.box.raycastTarget = false;
+
+            var plate = NewRect("NamePlate", box);
+            plate.anchorMin = plate.anchorMax = new Vector2(0f, 1f);
+            plate.pivot = new Vector2(0f, 0.5f);
+            plate.sizeDelta = new Vector2(340 * k, 70 * k);
+            plate.anchoredPosition = new Vector2(40 * k, 0);
+            p.plate = plate.gameObject.AddComponent<Image>();
+            p.plate.raycastTarget = false;
+            var plateText = Label(plate, "이름", Mathf.RoundToInt(40 * k), Color.white, true, TextAnchor.MiddleCenter);
+            Stretch(plateText.rectTransform);
+
+            p.text = Label(box, "대사가 이곳에 표시됩니다. 가나다 ABC 123", Mathf.RoundToInt(40 * k), Color.white);
+            var tr = p.text.rectTransform;
+            Stretch(tr);
+            tr.offsetMin = new Vector2(60 * k, 40 * k);
+            tr.offsetMax = new Vector2(-60 * k, -60 * k);
+            p.text.alignment = TextAnchor.UpperLeft;
+
+            previews.Add(p);
+            ApplyPreviewSkin(p, currentSkin);
+        }
+
+        /// <summary>미리보기 대화창에 UI 설정 반영 (게임 화면 VNPlayer.ApplySkin 과 같은 규칙)</summary>
+        static void ApplyPreviewSkin(StagePreview p, VNSkin skin)
+        {
+            const float toPreview = 1920f / PreviewWidth; // 9-slice 여백을 미리보기 크기에 맞게 줄임
+            SetPreviewImage(p.box, skin?.dialogueBox, skin?.dialogueBoxBorder ?? 0, new Color(0.05f, 0.05f, 0.1f, 0.82f), toPreview);
+            SetPreviewImage(p.plate, skin?.namePlate, skin?.namePlateBorder ?? 0, new Color(0.32f, 0.2f, 0.45f, 0.95f), toPreview);
+            p.text.font = skin?.font != null ? skin.font : font;
+            p.text.color = skin?.textColor ?? Color.white;
+        }
+
+        static void SetPreviewImage(Image img, Sprite sprite, int border, Color defColor, float ppuMultiplier)
+        {
+            if (sprite != null)
+            {
+                img.sprite = sprite;
+                img.color = Color.white;
+                img.type = border > 0 ? Image.Type.Sliced : Image.Type.Simple;
+                img.pixelsPerUnitMultiplier = ppuMultiplier;
+            }
+            else
+            {
+                img.sprite = null;
+                img.type = Image.Type.Simple;
+                img.color = defColor;
+            }
+        }
+
+        void RefreshPreview()
+        {
+            foreach (var p in previews)
+                for (int i = 0; i < 2; i++)
+                {
+                    var img = p.chars[i];
+                    var s = thumbs[i] != null && thumbs[i].enabled ? thumbs[i].sprite : null; // 초상화면 이미 잘린 이미지
+                    img.sprite = s;
+                    img.enabled = s != null;
+                    if (s != null) img.GetComponent<AspectRatioFitter>().aspectRatio = s.rect.width / s.rect.height;
+                    VNLayout.ApplySlot(img.rectTransform, i == 0 ? 0 : 2,
+                        st.GetMode(i) == VNSettings.DisplayMode.Portrait, st.GetScale(i), st.GetOffset(i));
+                }
+        }
+
+        static string FirstBackground(VNScript script)
+        {
+            if (script?.lines == null) return null;
+            foreach (var l in script.lines)
+            {
+                var b = l?.background?.Trim();
+                if (!string.IsNullOrEmpty(b) && !b.Equals("none", System.StringComparison.OrdinalIgnoreCase) && b != "없음") return b;
+            }
+            return null;
+        }
+
+        void SetPreviewBackground(string path)
+        {
+            if (path == previewBgPath) return;
+            previewBgPath = path;
+            foreach (var p in previews) p.bg.enabled = false;
+            if (string.IsNullOrEmpty(path)) return;
+            StartCoroutine(VNImageLoader.Load(path, sp =>
+            {
+                if (path != previewBgPath) return;
+                foreach (var p in previews)
+                {
+                    p.bg.sprite = sp;
+                    p.bg.enabled = sp != null;
+                    if (sp != null) p.bgFit.aspectRatio = sp.rect.width / sp.rect.height;
+                }
+            }));
         }
 
         void ApplyWindowMode()
@@ -575,10 +976,13 @@ namespace VisualNovel
         void RefreshAll()
         {
             VNImageLoader.ClearCache();
+            RefreshUILists();
+            LoadSkin();
             RefreshCharacter(0);
             RefreshCharacter(1);
             RefreshScriptList();
             RefreshScriptStatus();
+            RefreshBackground();
             RefreshBgmList();
             RefreshBgmStatus();
         }

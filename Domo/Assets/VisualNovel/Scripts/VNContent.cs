@@ -18,6 +18,7 @@ namespace VisualNovel
         public const string ScriptFolder = "대사";
         public const string ImageFolder = "이미지";
         public const string BgmFolder = "배경음";
+        public const string UIFolder = "UI";
         public static readonly string[] ScriptExtensions = { ".txt", ".json" };
         public static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg" };
         public static readonly string[] AudioExtensions = { ".mp3", ".ogg", ".wav" };
@@ -81,7 +82,7 @@ namespace VisualNovel
         /// <summary>이전 버전 빌드 폴더에 새 하위 폴더(대사/이미지/배경음)가 없으면 내장 데이터에서 채워 넣는다.</summary>
         static void AddMissingSubfolders()
         {
-            foreach (var sub in new[] { ScriptFolder, ImageFolder, BgmFolder })
+            foreach (var sub in new[] { ScriptFolder, ImageFolder, BgmFolder, UIFolder })
             {
                 var dst = Path.Combine(Root, sub);
                 if (Directory.Exists(dst)) continue;

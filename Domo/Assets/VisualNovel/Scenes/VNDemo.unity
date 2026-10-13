@@ -549,6 +549,7 @@ MonoBehaviour:
   contentFolder: VN
   useExternalFolder: 1
   scriptPath: script.txt
+  defaultBackground: 
   scriptText: 
   script:
     variables: []
@@ -577,9 +578,6 @@ MonoBehaviour:
   onFinished:
     m_PersistentCalls:
       m_Calls: []
-  displayMode: 0
-  portraitAspect: 1.3333334
-  portraitFocus: 0
   characterScale: 1
 --- !u!224 &378786387
 RectTransform:

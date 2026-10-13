@@ -37,6 +37,9 @@ namespace VisualNovel
         [FormerlySerializedAs("jsonPath")]
         public string scriptPath = "script.txt";
 
+        [Tooltip("처음부터 표시할 기본 배경. 대사 파일의 [배경] 명령이 나오면 그 이미지로 바뀜")]
+        public string defaultBackground = "";
+
         [Tooltip("txt 대본 문법 또는 JSON 문자열")]
         [TextArea(4, 20)]
         [FormerlySerializedAs("jsonText")]
@@ -74,7 +77,7 @@ namespace VisualNovel
         public UnityEvent onFinished;
 
         [Header("인물 표시")]
-        [Tooltip("인물 크기 배율. 전신/초상화 여부는 캐릭터별(VNCharacterDef.portrait)로 지정")]
+        [Tooltip("모든 인물에 곱해지는 크기 배율. 전신/초상화·캐릭터별 크기·높이는 VNCharacterDef 의 portrait / scale / offsetY")]
         [Range(0.5f, 1.5f)] public float characterScale = 1f;
 
         /// <summary>false 면 클릭/키 입력으로 대사가 넘어가지 않음 (일시정지 메뉴 등)</summary>
@@ -148,8 +151,10 @@ namespace VisualNovel
         {
             if (nextIndicator != null && nextIndicator.activeSelf)
             {
-                var c = nextIndicator.GetComponent<Graphic>();
-                if (c) c.color = new Color(1, 1, 1, 0.4f + 0.6f * Mathf.PingPong(Time.time * 1.5f, 1f));
+                float a = 0.4f + 0.6f * Mathf.PingPong(Time.time * 1.5f, 1f);
+                var baseColor = dialogueText ? dialogueText.color : Color.white;
+                foreach (var g in nextIndicator.GetComponentsInChildren<Graphic>())
+                    g.color = new Color(baseColor.r, baseColor.g, baseColor.b, a);
             }
 
             if (inputEnabled && AdvancePressed()) Next();
@@ -287,6 +292,8 @@ namespace VisualNovel
         IEnumerator JumpRoutine(int index)
         {
             ResetStage();
+            if (!string.IsNullOrWhiteSpace(defaultBackground))
+                yield return VNImageLoader.Load(defaultBackground, ApplyBackground);
             for (int i = 0; i < index; i++) yield return ApplyStage(script.lines[i]);
             showing = null;
             ShowIndex(index);
@@ -426,7 +433,9 @@ namespace VisualNovel
             if (i < slotSources.Length) { slotSources[i] = s; slotDefs[i] = s != null ? def : null; }
             bool portrait = s != null && def != null && def.portrait;
             if (portrait) s = CropCached(s, def.portraitAspect > 0f ? def.portraitAspect : 4f / 3f, def.portraitFocus);
-            LayoutSlot(i, portrait);
+            if (i < VNLayout.SlotX.Length)
+                VNLayout.ApplySlot(characterSlots[i].rectTransform, i, portrait,
+                    (def != null ? def.scale : 1f) * characterScale, def != null ? def.offsetY : 0f);
             var img = characterSlots[i];
             img.sprite = s;
             img.enabled = s != null;
@@ -444,19 +453,6 @@ namespace VisualNovel
             var cropped = CropSprite(s, aspect, focus);
             cropCache[s] = (aspect, focus, cropped);
             return cropped;
-        }
-
-        /// <summary>슬롯 배치: 화면 바닥 기준. 초상화는 화면 높이의 80%, 전신은 92% (× 인물 크기)</summary>
-        void LayoutSlot(int i, bool portrait)
-        {
-            float[] xs = { 0.2f, 0.5f, 0.8f };
-            if (i >= xs.Length) return;
-            float h = (portrait ? 0.8f : 0.92f) * Mathf.Clamp(characterScale, 0.3f, 2f);
-            var rt = characterSlots[i].rectTransform;
-            rt.anchorMin = new Vector2(xs[i], 0f);
-            rt.anchorMax = new Vector2(xs[i], h);
-            rt.offsetMin = new Vector2(rt.offsetMin.x, 0f);
-            rt.offsetMax = new Vector2(rt.offsetMax.x, 0f);
         }
 
         /// <summary>
@@ -493,11 +489,58 @@ namespace VisualNovel
                 if (characterSlots[i]) ApplyCharacter((Slot)i, slotSources[i], slotDefs[i]);
         }
 
+        // ───────────────────────── UI (대사 박스 / 네임 박스 / 폰트) ─────────────────────────
+
+        bool skinDefaultsSaved;
+        Sprite defBoxSprite, defPlateSprite;
+        Color defBoxColor, defPlateColor, defTextColor;
+        Image.Type defBoxType, defPlateType;
+        Font defFont;
+
+        /// <summary>UI 설정 적용. null 이면 기본 UI 로 되돌림</summary>
+        public void ApplySkin(VNSkin skin)
+        {
+            var box = dialogueBox ? dialogueBox.GetComponent<Image>() : null;
+            var plate = namePlate ? namePlate.GetComponent<Image>() : null;
+            if (!skinDefaultsSaved)
+            {
+                skinDefaultsSaved = true;
+                if (box) { defBoxSprite = box.sprite; defBoxColor = box.color; defBoxType = box.type; }
+                if (plate) { defPlateSprite = plate.sprite; defPlateColor = plate.color; defPlateType = plate.type; }
+                if (dialogueText) { defTextColor = dialogueText.color; defFont = dialogueText.font; }
+            }
+
+            SetSkinImage(box, skin?.dialogueBox, skin?.dialogueBoxBorder ?? 0, defBoxSprite, defBoxColor, defBoxType);
+            SetSkinImage(plate, skin?.namePlate, skin?.namePlateBorder ?? 0, defPlateSprite, defPlateColor, defPlateType);
+            if (dialogueText)
+            {
+                dialogueText.font = skin?.font != null ? skin.font : defFont;
+                dialogueText.color = skin?.textColor ?? defTextColor;
+            }
+        }
+
+        static void SetSkinImage(Image img, Sprite sprite, int border, Sprite defSprite, Color defColor, Image.Type defType)
+        {
+            if (!img) return;
+            if (sprite != null)
+            {
+                img.sprite = sprite;
+                img.color = Color.white;
+                img.type = border > 0 ? Image.Type.Sliced : Image.Type.Simple;
+                img.pixelsPerUnitMultiplier = 1f;
+            }
+            else
+            {
+                img.sprite = defSprite;
+                img.color = defColor;
+                img.type = defType;
+            }
+        }
+
         /// <summary>설정 화면 값 적용</summary>
         public void ApplySettings(VNSettings st)
         {
             charsPerSecond = st.CharsPerSecond;
-            characterScale = st.characterScale;
 
             presetCharacters.Clear();
             presetPositions.Clear();
@@ -507,6 +550,7 @@ namespace VisualNovel
 
             source = ScriptSource.File;
             scriptPath = st.ResolveScriptPath() ?? "";
+            defaultBackground = st.backgroundImage?.Trim() ?? "";
             ApplyDisplaySettings();
         }
 
@@ -520,6 +564,8 @@ namespace VisualNovel
                 portrait = st.GetMode(idx) == VNSettings.DisplayMode.Portrait,
                 portraitAspect = VNSettings.AspectOf(st.GetRatio(idx)),
                 portraitFocus = st.GetFocus(idx),
+                scale = st.GetScale(idx),
+                offsetY = st.GetOffset(idx),
             });
             presetPositions[name] = pos;
             speakerAliases[alias] = name;

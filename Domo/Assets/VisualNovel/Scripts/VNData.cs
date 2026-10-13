@@ -46,6 +46,10 @@ namespace VisualNovel
         public float portraitAspect = 4f / 3f;
         [Tooltip("초상화로 자를 세로 위치 (0 = 맨 위, 1 = 맨 아래)")]
         [Range(0f, 1f)] public float portraitFocus;
+        [Tooltip("크기 배율 (1 = 기본)")]
+        public float scale = 1f;
+        [Tooltip("높이 (화면 높이 비율. 0 = 바닥에 붙음, + 위로, - 아래로)")]
+        public float offsetY;
     }
 
     [Serializable]
